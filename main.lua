@@ -1,1015 +1,773 @@
-
---[[
-    lemon.lua UI Library
-    Custom UI framework with cloneref + CoreGui protection
-    Replaces ImGui for lemon.lua cheat menu
-    
-    API:
-        local Library = loadstring(...)()
-        local Window = Library:CreateWindow({ Title, Size, ToggleKey })
-        local Tab = Window:CreateTab("TAB_NAME")
-        local Section = Tab:CreateSection("SECTION_TITLE")
-        Section:Checkbox({ Label, Value, Callback })
-        Section:Slider({ Label, Value, MinValue, MaxValue, Callback })
-        Section:Combo({ Label, Selected, Items, Callback })
-        Section:InputText({ Label, PlaceHolder, Value })
-        Section:Button({ Text, Callback })
-        Section:Keybind({ Label, Value, IgnoreGameProcessed, Callback })
-        Window:SetVisible(bool)
-        Window:Close()
-        Window:Destroy()
-]]
-
-local Library = {}
-
--- ═══════════════════════════════════════════════════
--- PROTECTION & SERVICES
--- ═══════════════════════════════════════════════════
-local CloneRef = cloneref or function(x) return x end
-local Players = CloneRef(game:GetService("Players"))
-local TweenService = CloneRef(game:GetService("TweenService"))
-local UserInputService = CloneRef(game:GetService("UserInputService"))
-local RunService = CloneRef(game:GetService("RunService"))
-local CoreGui = CloneRef(game:GetService("CoreGui"))
-
-local LocalPlayer = Players.LocalPlayer
-local isStudio = RunService:IsStudio()
-local guiParent = isStudio and LocalPlayer.PlayerGui or CoreGui
-
--- ═══════════════════════════════════════════════════
--- THEME
--- ═══════════════════════════════════════════════════
-local Theme = {
-	Accent      = Color3.fromRGB(112, 146, 190),
-	AccentDark  = Color3.fromRGB(80, 110, 150),
-	AccentHover = Color3.fromRGB(130, 162, 200),
-	BgDark      = Color3.fromRGB(13, 13, 15),
-	BgMain      = Color3.fromRGB(20, 20, 22),
-	BgChild     = Color3.fromRGB(24, 24, 26),
-	BgHeader    = Color3.fromRGB(28, 28, 30),
-	BgInput     = Color3.fromRGB(16, 16, 18),
-	Border      = Color3.fromRGB(40, 52, 68),
-	Text        = Color3.fromRGB(255, 255, 255),
-	TextDim     = Color3.fromRGB(102, 102, 102),
-	TextMid     = Color3.fromRGB(170, 170, 170),
-	Green       = Color3.fromRGB(100, 255, 100),
-	Red         = Color3.fromRGB(255, 100, 100),
-}
-
--- ═══════════════════════════════════════════════════
--- UTILITY
--- ═══════════════════════════════════════════════════
-local function create(cls, parent, props)
-	local inst = Instance.new(cls)
-	for k, v in pairs(props or {}) do
-		inst[k] = v
-	end
-	inst.Parent = parent
-	return inst
+local function deleteConfig(name)
+	if not isfolder or not isfile or not delfile then return end
+	local path = "lemon_lua/configs/" .. name .. ".json"
+	if isfile(path) then delfile(path) end
 end
 
-local function tw(obj, props, dur, style, dir)
-	local t = TweenService:Create(
-		obj,
-		TweenInfo.new(dur or 0.2, style or Enum.EasingStyle.Quad, dir or Enum.EasingDirection.Out),
-		props
-	)
-	t:Play()
-	return t
+local function getConfigList()
+	local list = {"none"}
+	if not isfolder or not listfiles then return list end
+	if not isfolder("lemon_lua/configs") then return list end
+	for _, file in listfiles("lemon_lua/configs") do
+		local name = file:match("([^/\\]+)%.json$")
+		if name then table.insert(list, name) end
+	end
+	return list
 end
 
--- ═══════════════════════════════════════════════════
--- LIBRARY : CreateWindow
--- ═══════════════════════════════════════════════════
-function Library:CreateWindow(config)
-	config = config or {}
-	local title     = config.Title or "lemon.lua"
-	local size      = config.Size or UDim2.fromOffset(690, 470)
-	local toggleKey = config.ToggleKey or Enum.KeyCode.Insert
-
-	local Window = {}
-	local tabs = {}
-	local currentTabIndex = 0
-	local visible = true
-	local connections = {}
-	local activeSlider = nil -- for global slider tracking
-
-	-- ── ScreenGui ──
-	local screenGui = create("ScreenGui", guiParent, {
-		Name = "LemonUI_" .. math.random(100000, 999999),
-		DisplayOrder = 99998,
-		ResetOnSpawn = false,
-		IgnoreGuiInset = true,
-		ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
-	})
-
-	-- ── Main Window Frame ──
-	local windowFrame = create("Frame", screenGui, {
-		Name = "Window",
-		Size = size,
-		Position = UDim2.new(0.5, 0, 0.5, 0),
-		AnchorPoint = Vector2.new(0.5, 0.5),
-		BackgroundColor3 = Theme.BgMain,
-		BorderSizePixel = 0,
-	})
-	create("UICorner", windowFrame, { CornerRadius = UDim.new(0, 6) })
-	create("UIStroke", windowFrame, {
-		Color = Theme.Border,
-		Thickness = 1,
-		Transparency = 0.5,
-	})
-
-	-- ── Left Sidebar ──
-	local sidebar = create("Frame", windowFrame, {
-		Name = "Sidebar",
-		Size = UDim2.new(0, 128, 1, 0),
-		BackgroundColor3 = Theme.BgDark,
-		BorderSizePixel = 0,
-	})
-	create("UICorner", sidebar, { CornerRadius = UDim.new(0, 6) })
-	create("Frame", sidebar, { -- mask right corners
-		Size = UDim2.new(0, 10, 1, 0),
-		Position = UDim2.new(1, -10, 0, 0),
-		BackgroundColor3 = Theme.BgDark,
-		BorderSizePixel = 0,
-	})
-
-	-- Accent bar
-	create("Frame", sidebar, {
-		Size = UDim2.new(0, 3, 0, 20),
-		Position = UDim2.new(0, 12, 0, 12),
-		BackgroundColor3 = Theme.Accent,
-		BorderSizePixel = 0,
-	})
-
-	-- Title
-	create("TextLabel", sidebar, {
-		Size = UDim2.new(1, -30, 0, 44),
-		Position = UDim2.new(0, 22, 0, 0),
-		BackgroundTransparency = 1,
-		Text = title,
-		TextColor3 = Theme.Text,
-		TextSize = 16,
-		Font = Enum.Font.GothamBold,
-		TextXAlignment = Enum.TextXAlignment.Left,
-	})
-
-	-- Divider
-	create("Frame", sidebar, {
-		Size = UDim2.new(1, -20, 0, 1),
-		Position = UDim2.new(0, 10, 0, 44),
-		BackgroundColor3 = Theme.Border,
-		BackgroundTransparency = 0.5,
-		BorderSizePixel = 0,
-	})
-
-	-- Tab button area in sidebar
-	local tabContainer = create("Frame", sidebar, {
-		Name = "Tabs",
-		Size = UDim2.new(1, -16, 1, -56),
-		Position = UDim2.new(0, 8, 0, 52),
-		BackgroundTransparency = 1,
-	})
-	create("UIListLayout", tabContainer, {
-		SortOrder = Enum.SortOrder.LayoutOrder,
-		Padding = UDim.new(0, 3),
-	})
-
-	-- ── Bottom Bar ──
-	local bottomBar = create("Frame", windowFrame, {
-		Name = "BottomBar",
-		Size = UDim2.new(1, 0, 0, 32),
-		Position = UDim2.new(0, 0, 1, -32),
-		BackgroundColor3 = Theme.BgDark,
-		BorderSizePixel = 0,
-	})
-	create("UICorner", bottomBar, { CornerRadius = UDim.new(0, 6) })
-	create("Frame", bottomBar, { -- mask top corners
-		Size = UDim2.new(1, 0, 0, 10),
-		BackgroundColor3 = Theme.BgDark,
-		BorderSizePixel = 0,
-	})
-	create("TextLabel", bottomBar, {
-		Size = UDim2.new(1, -20, 1, 0),
-		Position = UDim2.new(0, 10, 0, 0),
-		BackgroundTransparency = 1,
-		Text = title .. "  |  press INSERT to toggle",
-		TextColor3 = Theme.TextDim,
-		TextSize = 11,
-		Font = Enum.Font.Gotham,
-		TextXAlignment = Enum.TextXAlignment.Left,
-	})
-
-	-- ── Content Area ──
-	local contentArea = create("ScrollingFrame", windowFrame, {
-		Name = "Content",
-		Size = UDim2.new(1, -138, 1, -42),
-		Position = UDim2.new(0, 133, 0, 5),
-		BackgroundTransparency = 1,
-		BorderSizePixel = 0,
-		ScrollBarThickness = 3,
-		ScrollBarImageColor3 = Theme.Accent,
-		ScrollBarImageTransparency = 0.5,
-		CanvasSize = UDim2.new(0, 0, 0, 0),
-		AutomaticCanvasSize = Enum.AutomaticSize.Y,
-	})
-	create("UIListLayout", contentArea, {
-		SortOrder = Enum.SortOrder.LayoutOrder,
-		Padding = UDim.new(0, 8),
-	})
-	create("UIPadding", contentArea, {
-		PaddingTop = UDim.new(0, 4),
-		PaddingBottom = UDim.new(0, 8),
-		PaddingLeft = UDim.new(0, 4),
-		PaddingRight = UDim.new(0, 8),
-	})
-
-	-- ── Dropdown Overlay (for Combo popups) ──
-	local dropdownOverlay = create("Frame", screenGui, {
-		Name = "DropdownOverlay",
-		Size = UDim2.fromScale(1, 1),
-		BackgroundTransparency = 1,
-		Visible = false,
-		ZIndex = 100,
-	})
-	local activeDropdown = nil
-
-	local function closeDropdown()
-		if activeDropdown then
-			activeDropdown:Destroy()
-			activeDropdown = nil
-			dropdownOverlay.Visible = false
+local function saveCurrentConfig(name)
+	if not isfolder or not writefile then return end
+	if not isfolder("lemon_lua") then makefolder("lemon_lua") end
+	if not isfolder("lemon_lua/configs") then makefolder("lemon_lua/configs") end
+	local data = {}
+	for key, val in pairs(cfg) do
+		if typeof(val) == "boolean" or typeof(val) == "number" or typeof(val) == "string" then
+			data[key] = val
+		elseif typeof(val) == "Color3" then
+			data[key] = {R = math.floor(val.R * 255), G = math.floor(val.G * 255), B = math.floor(val.B * 255), _type = "Color3"}
+		elseif typeof(val) == "EnumItem" then
+			data[key] = {_type = "EnumItem", _enum = tostring(val.EnumType), _value = val.Name}
 		end
 	end
+	data._skinConfig = weaponSkinConfig
+	data._knifeGloveMapping = knifeGloveMapping
+	writefile("lemon_lua/configs/" .. name .. ".json", HttpService:JSONEncode(data))
+end
 
-	-- clicking empty area closes dropdown
-	create("TextButton", dropdownOverlay, {
-		Size = UDim2.fromScale(1, 1),
-		BackgroundTransparency = 1,
-		Text = "",
-		ZIndex = 100,
-	}).MouseButton1Click:Connect(closeDropdown)
-
-	-- ════════════════════════════
-	-- TAB SWITCHING
-	-- ════════════════════════════
-	local function showTab(index)
-		for i, tab in ipairs(tabs) do
-			local active = (i == index)
-			tab.contentFrame.Visible = active
-			if tab.button then
-				tw(tab.button, {
-					BackgroundTransparency = active and 0.85 or 1,
-				}, 0.15)
-				tw(tab.indicator, {
-					BackgroundTransparency = active and 0 or 1,
-				}, 0.15)
-				tw(tab.label, {
-					TextColor3 = active and Theme.Text or Theme.TextDim,
-				}, 0.15)
-			end
+local function loadConfig(name)
+	if not isfile then return end
+	local path = "lemon_lua/configs/" .. name .. ".json"
+	if not isfile(path) then return end
+	local ok, data = pcall(function() return HttpService:JSONDecode(readfile(path)) end)
+	if not ok or not data then return end
+	for key, val in pairs(data) do
+		if key == "_skinConfig" then
+			if type(val) == "table" then weaponSkinConfig = val end
+		elseif key == "_knifeGloveMapping" then
+			if type(val) == "table" then knifeGloveMapping = val end
+		elseif type(val) == "table" and val._type == "Color3" then
+			cfg[key] = Color3.fromRGB(val.R, val.G, val.B)
+		elseif type(val) == "table" and val._type == "EnumItem" then
+			pcall(function() cfg[key] = Enum[val._enum][val._value] end)
+		else
+			if cfg[key] ~= nil then cfg[key] = val end
 		end
-		currentTabIndex = index
-		contentArea.CanvasPosition = Vector2.new(0, 0)
 	end
+	-- Re-apply all settings
+	setupHitsound(); setupBhop(); setupRiskyBhop(); setupAntiFlash(); setupSmoke()
+	setupNightMode(); setupFOV(); setupSpeed(); setupThirdPerson()
+	setupNoScopeSway(); setupInstantScope(); setupQuickscope(); setupBombTimer()
+	setupAntiAim(); setupAutoStrafe(); setupEdgeJump(); setupRapidfire()
+	setupDesync(); setupGunChams(); setupCharacterChanger()
+	if cfg.skinChangerEnabled then forceReequipWeapon() end
+	if cfg.skyboxEnabled then applySkybox(cfg.skyboxSelected) end
+end
 
-	-- ════════════════════════════
-	-- WINDOW DRAGGING
-	-- ════════════════════════════
-	local dragging, dragStart, startPos
+local function saveConfigs() end
+local function loadConfigs() end
 
-	sidebar.InputBegan:Connect(function(input)
-		if input.UserInputType == Enum.UserInputType.MouseButton1 then
-			dragging = true
-			dragStart = input.Position
-			startPos = windowFrame.Position
+local function initializeScript()
+	initializeSkinChanger()
+	setupCharacterChanger()
+	setupHitsound()
+
+	conns.mouseClick = UserInputService.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 and cfg.bulletTracerEnabled then
+			task.defer(function()
+				local char = LocalPlayer.Character; if not char then return end
+				local weapon = Camera:FindFirstChildWhichIsA("Model")
+				local muzzle = weapon and weapon:FindFirstChild("Muzzle", true)
+				local origin = muzzle and muzzle.WorldPosition or Camera.CFrame.Position
+				local mouseHit = LocalPlayer:GetMouse().Hit.Position
+				local rayParams = RaycastParams.new()
+				rayParams.FilterDescendantsInstances = {char, Workspace:FindFirstChild("Debris")}
+				rayParams.FilterType = Enum.RaycastFilterType.Exclude
+				local direction = (mouseHit - origin).Unit * 1000
+				local result = Workspace:Raycast(origin, direction, rayParams)
+				createBulletTracer(origin, result and result.Position or (origin + direction))
+			end)
 		end
 	end)
 
-	table.insert(connections, UserInputService.InputChanged:Connect(function(input)
-		if input.UserInputType == Enum.UserInputType.MouseMovement then
-			if dragging then
-				local delta = input.Position - dragStart
-				windowFrame.Position = UDim2.new(
-					startPos.X.Scale, startPos.X.Offset + delta.X,
-					startPos.Y.Scale, startPos.Y.Offset + delta.Y
-				)
-			end
-			-- global slider drag
-			if activeSlider then
-				activeSlider(input)
-			end
+	task.spawn(function() while true do currentPing = mathFloor(LocalPlayer:GetNetworkPing() * 1000); task.wait(0.5) end end)
+
+	conns.render = RunService.RenderStepped:Connect(function(dt)
+		currentFps = mathFloor(1 / dt)
+		cameraPosition = Camera.CFrame.Position; cameraCFrame = Camera.CFrame
+		viewportSize = Camera.ViewportSize; viewportSizeCenter = viewportSize / 2
+		
+		if cfg.aimEnabled and UserInputService:IsKeyDown(cfg.aimKey) then moveMouseToTarget(getClosestTarget()) end
+		checkTriggerbot()
+		
+		if cfg.fovEnabled and cfg.aimEnabled then
+			fovCircle.Position = viewportSizeCenter
+			fovCircle.Radius = cfg.fovSize; fovCircle.Color = cfg.fovColor; fovCircle.Visible = true
+		else fovCircle.Visible = false end
+		
+		if cfg.espEnabled then for _, esp in espObjects do esp:update() end else for _, esp in espObjects do esp:hide() end end
+		for _, player in Players:GetPlayers() do updateHitbox(player); updateGlow(player); updateSkeleton(player) end
+		if cfg.xrayEnabled then applyViewmodelXray() end
+		updateSpreadCircle(); updateBombTimer(); updateDroppedWeaponESP()
+		
+		updateSpectators()
+		
+		-- Update Library watermark
+		if cfg.watermarkEnabled then
+			local parts = {}
+			if cfg.watermarkName then table.insert(parts, LocalPlayer.Name) end
+			if cfg.watermarkFps then table.insert(parts, "fps " .. currentFps) end
+			if cfg.watermarkPing then table.insert(parts, "ping " .. currentPing .. "ms") end
+			Library:SetWatermark("lemon.lua | " .. table.concat(parts, " | "))
+		else
+			Library:SetWatermarkVisibility(false)
 		end
-	end))
-
-	table.insert(connections, UserInputService.InputEnded:Connect(function(input)
-		if input.UserInputType == Enum.UserInputType.MouseButton1 then
-			dragging = false
-			activeSlider = nil
+		
+		-- Spectators via watermark or small label
+		if cfg.spectatorsWindowEnabled and #spectatorsList > 0 then
+			-- spectators are shown in the built-in keybind-style frame via custom label
 		end
-	end))
-
-	-- ════════════════════════════
-	-- TOGGLE KEY
-	-- ════════════════════════════
-	table.insert(connections, UserInputService.InputBegan:Connect(function(input, gameProcessed)
-		if not gameProcessed and input.KeyCode == toggleKey then
-			visible = not visible
-			windowFrame.Visible = visible
+		
+		for i = #bulletTracers, 1, -1 do
+			local tracer = bulletTracers[i]
+			local alpha = 1 - ((tick() - tracer.startTime) / cfg.bulletTracerDuration)
+			if alpha <= 0 then
+				if tracer.beam then tracer.beam:Destroy() end
+				if tracer.part0 then tracer.part0:Destroy() end
+				if tracer.part1 then tracer.part1:Destroy() end
+				table.remove(bulletTracers, i)
+			elseif tracer.beam then tracer.beam.Transparency = NumberSequence.new(1 - alpha) end
 		end
-	end))
+	end)
 
-	-- ════════════════════════════════════════════════
-	-- Window:CreateTab
-	-- ════════════════════════════════════════════════
-	function Window:CreateTab(name)
-		local Tab = {}
-		local tabIndex = #tabs + 1
+	loadConfigs(); setupNoScopeSway(); setupInstantScope(); setupQuickscope(); setupBombTimer()
+	setupAntiAim(); setupAutoStrafe(); setupEdgeJump(); setupRapidfire()
 
-		-- Sidebar button
-		local btn = create("TextButton", tabContainer, {
-			Name = "Tab_" .. name,
-			Size = UDim2.new(1, 0, 0, 30),
-			BackgroundColor3 = Theme.Accent,
-			BackgroundTransparency = 1,
-			Text = "",
-			AutoButtonColor = false,
-			LayoutOrder = tabIndex,
-		})
-		create("UICorner", btn, { CornerRadius = UDim.new(0, 4) })
+	-- ═══════════════════════════════════════════════════
+	-- LINORIA UI CREATION
+	-- ═══════════════════════════════════════════════════
 
-		-- Active indicator bar
-		local indicator = create("Frame", btn, {
-			Size = UDim2.new(0, 3, 0, 16),
-			Position = UDim2.new(0, 2, 0.5, 0),
-			AnchorPoint = Vector2.new(0, 0.5),
-			BackgroundColor3 = Theme.Accent,
-			BackgroundTransparency = 1,
-			BorderSizePixel = 0,
-		})
-		create("UICorner", indicator, { CornerRadius = UDim.new(0, 2) })
+	local Window = Library:CreateWindow({
+		Title = 'lemon.lua',
+		Center = true,
+		AutoShow = true,
+		TabPadding = 1,
+		MenuFadeTime = 0.15,
+	})
 
-		local tabLabel = create("TextLabel", btn, {
-			Size = UDim2.new(1, -20, 1, 0),
-			Position = UDim2.new(0, 14, 0, 0),
-			BackgroundTransparency = 1,
-			Text = name,
-			TextColor3 = Theme.TextDim,
-			TextSize = 12,
-			Font = Enum.Font.GothamSemibold,
-			TextXAlignment = Enum.TextXAlignment.Left,
-		})
+	local Tabs = {
+		Combat = Window:AddTab('Combat'),
+		Visuals = Window:AddTab('Visuals'),
+		Misc = Window:AddTab('Misc'),
+		['Skin Changer'] = Window:AddTab('Skin Changer'),
+		Settings = Window:AddTab('Settings'),
+	}
 
-		-- Content frame for this tab
-		local contentFrame = create("Frame", contentArea, {
-			Name = "Tab_" .. name,
-			Size = UDim2.new(1, 0, 0, 0),
-			AutomaticSize = Enum.AutomaticSize.Y,
-			BackgroundTransparency = 1,
-			Visible = (tabIndex == 1),
-			LayoutOrder = tabIndex,
-		})
-		create("UIListLayout", contentFrame, {
-			SortOrder = Enum.SortOrder.LayoutOrder,
-			Padding = UDim.new(0, 8),
-		})
+	-- ═══════════════════════════════════════════════════
+	-- COMBAT TAB
+	-- ═══════════════════════════════════════════════════
+	do
+		local LeftGroup = Tabs.Combat:AddLeftGroupbox('Soft Aim')
+		LeftGroup:AddToggle('aimEnabled', { Text = 'Enable', Default = cfg.aimEnabled, Callback = function(v) cfg.aimEnabled = v end })
+			:AddKeyPicker('aimKey', { Default = cfg.aimKey, Text = 'Aim Key', SyncToggleState = false, Mode = 'Hold',
+				Callback = function(v) end, ChangedCallback = function(key) cfg.aimKey = key end })
 
-		local tabData = {
-			button = btn,
-			indicator = indicator,
-			label = tabLabel,
-			contentFrame = contentFrame,
-		}
-		tabs[tabIndex] = tabData
+		LeftGroup:AddSlider('aimSmooth', { Text = 'Smoothness', Default = 15, Min = 1, Max = 100, Rounding = 0,
+			Callback = function(v) cfg.aimSmooth = v / 100 end })
+		LeftGroup:AddSlider('aimFOV', { Text = 'FOV Size', Default = 200, Min = 50, Max = 500, Rounding = 0,
+			Callback = function(v) cfg.aimFOV = v; cfg.fovSize = v end })
+		LeftGroup:AddToggle('aimVisCheck', { Text = 'Visible Check', Default = cfg.aimVisCheck, Callback = function(v) cfg.aimVisCheck = v end })
+		LeftGroup:AddToggle('fovEnabled', { Text = 'Show FOV Circle', Default = cfg.fovEnabled, Callback = function(v) cfg.fovEnabled = v end })
+			:AddColorPicker('fovColor', { Default = cfg.fovColor, Title = 'FOV Color', Callback = function(c) cfg.fovColor = c end })
+		LeftGroup:AddDropdown('aimPart', { Text = 'Body Part', Default = cfg.aimPart,
+			Values = {"head", "upper torso", "lower torso", "closest", "random"},
+			Callback = function(v) cfg.aimPart = v end })
 
-		-- Hover
-		btn.MouseEnter:Connect(function()
-			if currentTabIndex ~= tabIndex then
-				tw(btn, { BackgroundTransparency = 0.9 }, 0.1)
-			end
-		end)
-		btn.MouseLeave:Connect(function()
-			if currentTabIndex ~= tabIndex then
-				tw(btn, { BackgroundTransparency = 1 }, 0.1)
-			end
-		end)
-		btn.MouseButton1Click:Connect(function()
-			closeDropdown()
-			showTab(tabIndex)
-		end)
+		-- Triggerbot
+		local RightGroup = Tabs.Combat:AddRightGroupbox('Triggerbot')
+		RightGroup:AddToggle('triggerEnabled', { Text = 'Enable', Default = cfg.triggerEnabled, Callback = function(v) cfg.triggerEnabled = v end })
+		RightGroup:AddSlider('triggerDelay', { Text = 'Delay (ms)', Default = cfg.triggerDelay, Min = 0, Max = 500, Rounding = 0,
+			Callback = function(v) cfg.triggerDelay = v end })
+		RightGroup:AddSlider('triggerChance', { Text = 'Chance (%)', Default = cfg.triggerChance, Min = 1, Max = 100, Rounding = 0,
+			Callback = function(v) cfg.triggerChance = v end })
+		RightGroup:AddToggle('triggerSmoke', { Text = 'Shoot Through Smoke', Default = cfg.triggerShootThroughSmoke,
+			Callback = function(v) cfg.triggerShootThroughSmoke = v end })
 
-		if tabIndex == 1 then
-			showTab(1)
-		end
+		-- Rapidfire
+		local RapidGroup = Tabs.Combat:AddLeftGroupbox('Rapidfire')
+		RapidGroup:AddToggle('rapidfireEnabled', { Text = 'Enable', Default = cfg.rapidfireEnabled,
+			Callback = function(v) cfg.rapidfireEnabled = v; setupRapidfire() end })
+		RapidGroup:AddSlider('rapidfireDelay', { Text = 'Delay (ms)', Default = cfg.rapidfireDelay, Min = 10, Max = 200, Rounding = 0,
+			Callback = function(v) cfg.rapidfireDelay = v end })
 
-		-- ════════════════════════════════════════════════
-		-- Tab:CreateSection
-		-- ════════════════════════════════════════════════
-		function Tab:CreateSection(sectionTitle)
-			local Section = {}
-			local elementOrder = 0
+		-- Weapon
+		local WeaponGroup = Tabs.Combat:AddRightGroupbox('Weapon')
+		WeaponGroup:AddToggle('noScopeSwayEnabled', { Text = 'No Scope Sway', Default = cfg.noScopeSwayEnabled,
+			Callback = function(v) cfg.noScopeSwayEnabled = v; setupNoScopeSway() end })
+		WeaponGroup:AddToggle('instantScopeEnabled', { Text = 'Instant Scope', Default = cfg.instantScopeEnabled,
+			Callback = function(v) cfg.instantScopeEnabled = v; setupInstantScope() end })
+		WeaponGroup:AddToggle('quickscopeEnabled', { Text = 'Quickscope', Default = cfg.quickscopeEnabled,
+			Callback = function(v) cfg.quickscopeEnabled = v; setupQuickscope() end })
+		WeaponGroup:AddSlider('quickscopeDelay', { Text = 'QS Delay (ms)', Default = cfg.quickscopeDelay, Min = 0, Max = 200, Rounding = 0,
+			Callback = function(v) cfg.quickscopeDelay = v end })
 
-			local sectionFrame = create("Frame", contentFrame, {
-				Name = "Section_" .. sectionTitle,
-				Size = UDim2.new(1, -4, 0, 0),
-				AutomaticSize = Enum.AutomaticSize.Y,
-				BackgroundColor3 = Theme.BgChild,
-				BorderSizePixel = 0,
-				LayoutOrder = #contentFrame:GetChildren(),
-			})
-			create("UICorner", sectionFrame, { CornerRadius = UDim.new(0, 4) })
-			create("UIStroke", sectionFrame, {
-				Color = Theme.Border,
-				Thickness = 1,
-				Transparency = 0.7,
-			})
+		-- Hitbox
+		local HitboxGroup = Tabs.Combat:AddLeftGroupbox('Hitbox')
+		HitboxGroup:AddToggle('hitboxEnabled', { Text = 'Enable', Default = cfg.hitboxEnabled,
+			Callback = function(v) cfg.hitboxEnabled = v end })
+		HitboxGroup:AddSlider('hitboxSize', { Text = 'Size', Default = cfg.hitboxSize, Min = 1, Max = 5, Rounding = 0,
+			Callback = function(v) cfg.hitboxSize = v end })
 
-			-- Header
-			local header = create("Frame", sectionFrame, {
-				Size = UDim2.new(1, 0, 0, 28),
-				BackgroundColor3 = Theme.BgHeader,
-				BorderSizePixel = 0,
-			})
-			create("UICorner", header, { CornerRadius = UDim.new(0, 4) })
-			create("Frame", header, { -- mask bottom corners
-				Size = UDim2.new(1, 0, 0, 8),
-				Position = UDim2.new(0, 0, 1, -8),
-				BackgroundColor3 = Theme.BgHeader,
-				BorderSizePixel = 0,
-			})
-			create("Frame", header, { -- accent bar
-				Size = UDim2.new(0, 3, 0, 14),
-				Position = UDim2.new(0, 8, 0.5, -7),
-				BackgroundColor3 = Theme.Accent,
-				BorderSizePixel = 0,
-			})
-			create("TextLabel", header, {
-				Size = UDim2.new(1, -24, 1, 0),
-				Position = UDim2.new(0, 18, 0, 0),
-				BackgroundTransparency = 1,
-				Text = sectionTitle,
-				TextColor3 = Theme.Text,
-				TextSize = 12,
-				Font = Enum.Font.GothamMedium,
-				TextXAlignment = Enum.TextXAlignment.Left,
-			})
+		-- Recoil Control
+		local RCSGroup = Tabs.Combat:AddRightGroupbox('Recoil Control')
+		RCSGroup:AddToggle('rcsEnabled', { Text = 'Enable', Default = cfg.rcsEnabled,
+			Callback = function(v) cfg.rcsEnabled = v; setupRCS() end })
+		RCSGroup:AddSlider('rcsStrength', { Text = 'Strength', Default = math.floor(cfg.rcsStrength), Min = 1, Max = 10, Rounding = 0,
+			Callback = function(v) cfg.rcsStrength = v end })
 
-			-- Body
-			local body = create("Frame", sectionFrame, {
-				Name = "Body",
-				Size = UDim2.new(1, -16, 0, 0),
-				Position = UDim2.new(0, 8, 0, 32),
-				AutomaticSize = Enum.AutomaticSize.Y,
-				BackgroundTransparency = 1,
-			})
-			create("UIListLayout", body, {
-				SortOrder = Enum.SortOrder.LayoutOrder,
-				Padding = UDim.new(0, 4),
-			})
-			create("UIPadding", body, { PaddingBottom = UDim.new(0, 8) })
+		-- Rage
+		local RageGroup = Tabs.Combat:AddRightGroupbox('Rage')
+		RageGroup:AddToggle('antiAimEnabled', { Text = 'Anti-Aim', Default = cfg.antiAimEnabled, Risky = true,
+			Callback = function(v) cfg.antiAimEnabled = v; setupAntiAim() end })
+		RageGroup:AddDropdown('antiAimMode', { Text = 'AA Mode', Default = cfg.antiAimMode,
+			Values = {"Spin", "Jitter", "Random", "Sideways", "Backwards"},
+			Callback = function(v) cfg.antiAimMode = v end })
+		RageGroup:AddSlider('antiAimSpeed', { Text = 'AA Speed', Default = cfg.antiAimSpeed, Min = 1, Max = 50, Rounding = 0,
+			Callback = function(v) cfg.antiAimSpeed = v end })
+	end
 
-			local function nextOrder()
-				elementOrder = elementOrder + 1
-				return elementOrder
-			end
+	-- ═══════════════════════════════════════════════════
+	-- VISUALS TAB
+	-- ═══════════════════════════════════════════════════
+	do
+		local ESPGroup = Tabs.Visuals:AddLeftGroupbox('ESP')
+		ESPGroup:AddToggle('espEnabled', { Text = 'Enable', Default = cfg.espEnabled, Callback = function(v) cfg.espEnabled = v end })
+		ESPGroup:AddToggle('espBoxes', { Text = 'Boxes', Default = cfg.espBoxes, Callback = function(v) cfg.espBoxes = v end })
+			:AddColorPicker('espBoxColor', { Default = cfg.espBoxColor, Title = 'Box Color', Callback = function(c) cfg.espBoxColor = c end })
+		ESPGroup:AddDropdown('boxType', { Text = 'Box Type', Default = cfg.boxType,
+			Values = {"box", "highlight"}, Callback = function(v) cfg.boxType = v end })
+		ESPGroup:AddToggle('espNames', { Text = 'Names', Default = cfg.espNames, Callback = function(v) cfg.espNames = v end })
+			:AddColorPicker('espNamesColor', { Default = cfg.espNamesColor, Title = 'Name Color', Callback = function(c) cfg.espNamesColor = c end })
+		ESPGroup:AddToggle('espDistance', { Text = 'Distance', Default = cfg.espDistance, Callback = function(v) cfg.espDistance = v end })
+		ESPGroup:AddToggle('espState', { Text = 'State', Default = cfg.espState, Callback = function(v) cfg.espState = v end })
+		ESPGroup:AddToggle('espTracers', { Text = 'Tracers', Default = cfg.espTracers, Callback = function(v) cfg.espTracers = v end })
+			:AddColorPicker('espTracerColor', { Default = cfg.espTracerColor, Title = 'Tracer Color', Callback = function(c) cfg.espTracerColor = c end })
+		ESPGroup:AddToggle('espHealth', { Text = 'Health Bars', Default = cfg.espHealth, Callback = function(v) cfg.espHealth = v end })
+		ESPGroup:AddToggle('espSkeleton', { Text = 'Skeleton', Default = cfg.espSkeleton, Callback = function(v) cfg.espSkeleton = v end })
+			:AddColorPicker('espSkeletonColor', { Default = cfg.espSkeletonColor, Title = 'Skeleton Color', Callback = function(c) cfg.espSkeletonColor = c end })
+		ESPGroup:AddToggle('espGlow', { Text = 'Glow', Default = cfg.espGlow, Callback = function(v) cfg.espGlow = v end })
+			:AddColorPicker('espGlowColor', { Default = cfg.espGlowColor, Title = 'Glow Color', Callback = function(c) cfg.espGlowColor = c end })
+		ESPGroup:AddToggle('espTeamCheck', { Text = 'Team Check', Default = cfg.espTeamCheck, Callback = function(v) cfg.espTeamCheck = v end })
+		ESPGroup:AddToggle('espVisibleOnly', { Text = 'Visible Only', Default = cfg.espVisibleOnly, Callback = function(v) cfg.espVisibleOnly = v end })
+		ESPGroup:AddToggle('espProximityArrows', { Text = 'Proximity Arrows', Default = cfg.espProximityArrows,
+			Callback = function(v) cfg.espProximityArrows = v end })
 
-			-- ════════════════════════
-			-- CHECKBOX
-			-- ════════════════════════
-			function Section:Checkbox(cfg)
-				local value = cfg.Value or false
-				local cb = cfg.Callback
-				local el = { Value = value }
+		-- World ESP
+		local WorldESPGroup = Tabs.Visuals:AddLeftGroupbox('World ESP')
+		WorldESPGroup:AddToggle('droppedWeaponESPEnabled', { Text = 'Dropped Weapons', Default = cfg.droppedWeaponESPEnabled,
+			Callback = function(v) cfg.droppedWeaponESPEnabled = v end })
+			:AddColorPicker('droppedWeaponESPColor', { Default = cfg.droppedWeaponESPColor, Title = 'Weapon ESP Color',
+				Callback = function(c) cfg.droppedWeaponESPColor = c end })
+		WorldESPGroup:AddToggle('bombTimerEnabled', { Text = 'Bomb Timer', Default = cfg.bombTimerEnabled,
+			Callback = function(v) cfg.bombTimerEnabled = v; setupBombTimer() end })
+			:AddColorPicker('bombTimerColor', { Default = cfg.bombTimerColor, Title = 'Bomb Timer Color',
+				Callback = function(c) cfg.bombTimerColor = c end })
+		WorldESPGroup:AddToggle('spreadCircleEnabled', { Text = 'Spread Circle', Default = cfg.spreadCircleEnabled,
+			Callback = function(v) cfg.spreadCircleEnabled = v end })
+			:AddColorPicker('spreadCircleColor', { Default = cfg.spreadCircleColor, Title = 'Spread Circle Color',
+				Callback = function(c) cfg.spreadCircleColor = c end })
 
-				local row = create("TextButton", body, {
-					Size = UDim2.new(1, 0, 0, 22),
-					BackgroundTransparency = 1,
-					Text = "",
-					AutoButtonColor = false,
-					LayoutOrder = nextOrder(),
-				})
+		-- Gun Chams
+		local GunChamsGroup = Tabs.Visuals:AddRightGroupbox('Gun Chams')
+		GunChamsGroup:AddToggle('gunChamsEnabled', { Text = 'Enable', Default = cfg.gunChamsEnabled,
+			Callback = function(v) cfg.gunChamsEnabled = v; setupGunChams() end })
+			:AddColorPicker('gunChamsColor', { Default = cfg.gunChamsColor, Title = 'Gun Chams Color',
+				Callback = function(c) cfg.gunChamsColor = c end })
+		GunChamsGroup:AddDropdown('gunChamsStyle', { Text = 'Style', Default = cfg.gunChamsStyle,
+			Values = {"Pulse", "ForceField", "Flat", "Glass", "Tween", "Smooth", "ForceOverlay", "Water"},
+			Callback = function(v) cfg.gunChamsStyle = v; if cfg.gunChamsEnabled then resetGunChams(); setupGunChams() end end })
+		GunChamsGroup:AddDropdown('gunChamsTexture', { Text = 'Texture', Default = cfg.gunChamsTexture,
+			Values = {"None", "Hex", "Stars"}, Callback = function(v) cfg.gunChamsTexture = v end })
+		GunChamsGroup:AddSlider('gunChamsReflectance', { Text = 'Reflectance', Default = 0, Min = 0, Max = 100, Rounding = 0,
+			Callback = function(v) cfg.gunChamsReflectance = v / 100 end })
 
-				local box = create("Frame", row, {
-					Size = UDim2.fromOffset(14, 14),
-					Position = UDim2.new(0, 0, 0.5, 0),
-					AnchorPoint = Vector2.new(0, 0.5),
-					BackgroundColor3 = value and Theme.Accent or Theme.BgInput,
-					BorderSizePixel = 0,
-				})
-				create("UICorner", box, { CornerRadius = UDim.new(0, 3) })
-				create("UIStroke", box, { Color = Theme.Border, Thickness = 1, Transparency = 0.5 })
+		-- World
+		local WorldGroup = Tabs.Visuals:AddRightGroupbox('World')
+		WorldGroup:AddToggle('flashDisable', { Text = 'No Flash', Default = cfg.flashDisable,
+			Callback = function(v) cfg.flashDisable = v; setupAntiFlash() end })
+		WorldGroup:AddToggle('smokeRemove', { Text = 'Remove Smoke', Default = cfg.smokeRemove,
+			Callback = function(v) cfg.smokeRemove = v; setupSmoke() end })
+		WorldGroup:AddToggle('nightModeEnabled', { Text = 'Night Mode', Default = cfg.nightModeEnabled,
+			Callback = function(v) cfg.nightModeEnabled = v; setupNightMode() end })
+		local skyboxList = {"None"}; for name in pairs(Skies) do table.insert(skyboxList, name) end; table.sort(skyboxList)
+		WorldGroup:AddToggle('skyboxEnabled', { Text = 'Custom Skybox', Default = cfg.skyboxEnabled,
+			Callback = function(v) cfg.skyboxEnabled = v; if v then applySkybox(cfg.skyboxSelected) else applySkybox("None") end end })
+		WorldGroup:AddDropdown('skyboxSelected', { Text = 'Skybox', Default = cfg.skyboxSelected, Values = skyboxList,
+			Callback = function(v) cfg.skyboxSelected = v; if cfg.skyboxEnabled then applySkybox(v) end end })
 
-				local check = create("TextLabel", box, {
-					Size = UDim2.fromScale(1, 1),
-					BackgroundTransparency = 1,
-					Text = "\xE2\x9C\x93",
-					TextColor3 = Theme.Text,
-					TextSize = 10,
-					Font = Enum.Font.GothamBold,
-					TextTransparency = value and 0 or 1,
-				})
+		-- Bullet Tracer
+		local TracerGroup = Tabs.Visuals:AddRightGroupbox('Bullet Tracer')
+		TracerGroup:AddToggle('bulletTracerEnabled', { Text = 'Enable', Default = cfg.bulletTracerEnabled,
+			Callback = function(v) cfg.bulletTracerEnabled = v end })
+			:AddColorPicker('bulletTracerColor', { Default = cfg.bulletTracerColor, Title = 'Tracer Color',
+				Callback = function(c) cfg.bulletTracerColor = c end })
+		TracerGroup:AddSlider('bulletTracerThickness', { Text = 'Thickness', Default = math.floor(cfg.bulletTracerThickness), Min = 1, Max = 5, Rounding = 0,
+			Callback = function(v) cfg.bulletTracerThickness = v end })
+		TracerGroup:AddSlider('bulletTracerDuration', { Text = 'Duration (ms)', Default = 500, Min = 100, Max = 2000, Rounding = 0,
+			Callback = function(v) cfg.bulletTracerDuration = v / 1000 end })
+	end
 
-				local lbl = create("TextLabel", row, {
-					Size = UDim2.new(1, -22, 1, 0),
-					Position = UDim2.new(0, 22, 0, 0),
-					BackgroundTransparency = 1,
-					Text = cfg.Label or "",
-					TextColor3 = Theme.TextMid,
-					TextSize = 12,
-					Font = Enum.Font.Gotham,
-					TextXAlignment = Enum.TextXAlignment.Left,
-				})
+	-- ═══════════════════════════════════════════════════
+	-- MISC TAB
+	-- ═══════════════════════════════════════════════════
+	do
+		local MoveGroup = Tabs.Misc:AddLeftGroupbox('Movement')
+		MoveGroup:AddToggle('bhopEnabled', { Text = 'Bunny Hop', Default = cfg.bhopEnabled,
+			Callback = function(v) cfg.bhopEnabled = v; setupBhop() end })
+		MoveGroup:AddToggle('riskyBhopEnabled', { Text = 'Risky Bunny Hop', Default = cfg.riskyBhopEnabled, Risky = true,
+			Callback = function(v) cfg.riskyBhopEnabled = v; setupRiskyBhop() end })
+		MoveGroup:AddSlider('riskyBhopSpeed', { Text = 'Risky Bhop Speed', Default = cfg.riskyBhopSpeed, Min = 16, Max = 100, Rounding = 0,
+			Callback = function(v) cfg.riskyBhopSpeed = v end })
+		MoveGroup:AddToggle('autoStrafeEnabled', { Text = 'Auto Strafe', Default = cfg.autoStrafeEnabled,
+			Callback = function(v) cfg.autoStrafeEnabled = v; setupAutoStrafe() end })
+		MoveGroup:AddToggle('edgeJumpEnabled', { Text = 'Edge Jump', Default = cfg.edgeJumpEnabled,
+			Callback = function(v) cfg.edgeJumpEnabled = v; setupEdgeJump() end })
+		MoveGroup:AddToggle('speedEnabled', { Text = 'Speed', Default = cfg.speedEnabled, Risky = true,
+			Callback = function(v) cfg.speedEnabled = v; setupSpeed() end })
+		MoveGroup:AddSlider('speedAmount', { Text = 'Speed Amount', Default = cfg.speedAmount, Min = 1, Max = 160, Rounding = 0,
+			Callback = function(v) cfg.speedAmount = v end })
+		MoveGroup:AddToggle('thirdPersonEnabled', { Text = 'Third Person', Default = cfg.thirdPersonEnabled,
+			Callback = function(v) cfg.thirdPersonEnabled = v; setupThirdPerson() end })
+		MoveGroup:AddSlider('thirdPersonDistance', { Text = '3rd Person Dist', Default = cfg.thirdPersonDistance, Min = 5, Max = 30, Rounding = 0,
+			Callback = function(v) cfg.thirdPersonDistance = v end })
 
-				row.MouseEnter:Connect(function()
-					tw(lbl, { TextColor3 = Theme.Text }, 0.1)
+		-- Network
+		local NetGroup = Tabs.Misc:AddLeftGroupbox('Network')
+		NetGroup:AddToggle('desyncEnabled', { Text = 'Desync', Default = cfg.desyncEnabled, Risky = true,
+			Callback = function(v) cfg.desyncEnabled = v; setupDesync() end })
+		NetGroup:AddToggle('desyncVisualize', { Text = 'Visualize Desync', Default = cfg.desyncVisualize,
+			Callback = function(v) cfg.desyncVisualize = v end })
+			:AddColorPicker('desyncColor', { Default = cfg.desyncColor, Title = 'Desync Color', Callback = function(c) cfg.desyncColor = c end })
+		NetGroup:AddSlider('desyncTicks', { Text = 'Desync Ticks', Default = cfg.desyncTicks, Min = 1, Max = 20, Rounding = 0,
+			Callback = function(v) cfg.desyncTicks = v end })
+
+		-- Camera
+		local CamGroup = Tabs.Misc:AddRightGroupbox('Camera')
+		CamGroup:AddSlider('cameraFOV', { Text = 'Field of View', Default = cfg.cameraFOV, Min = 60, Max = 120, Rounding = 0,
+			Callback = function(v) cfg.cameraFOV = v; setupFOV() end })
+		CamGroup:AddToggle('xrayEnabled', { Text = 'Viewmodel Xray', Default = cfg.xrayEnabled,
+			Callback = function(v) cfg.xrayEnabled = v; if not v then resetViewmodelXray() end end })
+
+		-- Watermark
+		local WatermarkGroup = Tabs.Misc:AddRightGroupbox('Watermark')
+		WatermarkGroup:AddToggle('watermarkEnabled', { Text = 'Enable', Default = cfg.watermarkEnabled,
+			Callback = function(v) cfg.watermarkEnabled = v; if not v then Library:SetWatermarkVisibility(false) end end })
+		WatermarkGroup:AddToggle('watermarkName', { Text = 'Show Name', Default = cfg.watermarkName, Callback = function(v) cfg.watermarkName = v end })
+		WatermarkGroup:AddToggle('watermarkFps', { Text = 'Show FPS', Default = cfg.watermarkFps, Callback = function(v) cfg.watermarkFps = v end })
+		WatermarkGroup:AddToggle('watermarkPing', { Text = 'Show Ping', Default = cfg.watermarkPing, Callback = function(v) cfg.watermarkPing = v end })
+
+		-- Sounds
+		local SoundGroup = Tabs.Misc:AddRightGroupbox('Sounds')
+		SoundGroup:AddToggle('hitsoundEnabled', { Text = 'Hitsound', Default = cfg.hitsoundEnabled,
+			Callback = function(v) cfg.hitsoundEnabled = v; setupHitsound() end })
+		SoundGroup:AddDropdown('hitsoundSelected', { Text = 'Sound', Default = cfg.hitsoundSelected,
+			Values = {"Bameware","Bell","Bubble","Pick","Pop","Rust","Skeet","Neverlose","Minecraft"},
+			Callback = function(v)
+				cfg.hitsoundSelected = v
+				-- Preview the selected sound
+				task.spawn(function()
+					local s = Instance.new("Sound")
+					s.SoundId = hitsounds[v] or hitsounds.Bell
+					s.Volume = cfg.hitsoundVolume / 10
+					s.Parent = Workspace
+					s:Play()
+					game:GetService("Debris"):AddItem(s, 2)
 				end)
-				row.MouseLeave:Connect(function()
-					tw(lbl, { TextColor3 = Theme.TextMid }, 0.1)
-				end)
+			end })
+		SoundGroup:AddSlider('hitsoundVolume', { Text = 'Volume', Default = cfg.hitsoundVolume, Min = 1, Max = 10, Rounding = 0,
+			Callback = function(v) cfg.hitsoundVolume = v end })
 
-				row.MouseButton1Click:Connect(function()
-					value = not value
-					el.Value = value
-					tw(box, { BackgroundColor3 = value and Theme.Accent or Theme.BgInput }, 0.15)
-					tw(check, { TextTransparency = value and 0 or 1 }, 0.15)
-					if cb then cb(el, value) end
-				end)
+		-- Character Changer
+		local CharGroup = Tabs.Misc:AddRightGroupbox('Character Changer')
+		CharGroup:AddToggle('customCharacterEnabled', { Text = 'Enable', Default = cfg.customCharacterEnabled,
+			Callback = function(v) cfg.customCharacterEnabled = v; setupCharacterChanger() end })
+		local modelList = {}; for name in pairs(CharacterModels) do table.insert(modelList, name) end; table.sort(modelList)
+		CharGroup:AddDropdown('customCharacterModel', { Text = 'Model', Default = cfg.customCharacterModel, Values = modelList,
+			Callback = function(v) cfg.customCharacterModel = v; if cfg.customCharacterEnabled then setupCharacterChanger() end end })
+	end
 
-				function el:SetValue(v)
-					value = v
-					el.Value = v
-					box.BackgroundColor3 = v and Theme.Accent or Theme.BgInput
-					check.TextTransparency = v and 0 or 1
+	-- ═══════════════════════════════════════════════════
+	-- SKIN CHANGER TAB
+	-- ═══════════════════════════════════════════════════
+	do
+		local SkinGroup = Tabs['Skin Changer']:AddLeftGroupbox('Weapon Skins')
+		SkinGroup:AddToggle('skinChangerEnabled', { Text = 'Enable Skin Changer', Default = cfg.skinChangerEnabled,
+			Callback = function(v)
+				cfg.skinChangerEnabled = v
+				if v then
+					hookGetCameraModel(); hookViewmodelNew(); hookGetWeaponProperties()
+					task.wait(0.2); forceReequipWeapon()
 				end
+			end })
 
-				return el
+		local currentWeaponName, currentSkinName, currentCondition = "none", "none", "factory new"
+
+		local weaponList = {"none"}
+		for weaponName in pairs(weaponSkins) do
+			local isKnife = false
+			for _, knifeName in ipairs(KnifeList) do
+				if weaponName == knifeName then isKnife = true; break end
 			end
+			if not isKnife then table.insert(weaponList, weaponName) end
+		end
+		table.sort(weaponList)
 
-			-- ════════════════════════
-			-- SLIDER
-			-- ════════════════════════
-			function Section:Slider(cfg)
-				local value = cfg.Value or 0
-				local min = cfg.MinValue or cfg.Min or 0
-				local max = cfg.MaxValue or cfg.Max or 100
-				local cb = cfg.Callback
-				local el = { Value = value }
+		SkinGroup:AddDropdown('skinWeapon', { Text = 'Weapon', Default = "none", Values = weaponList,
+			Callback = function(v)
+				currentWeaponName = v
+				local skinList = {"none"}
+				if currentWeaponName ~= "none" and weaponSkins[currentWeaponName] then
+					for _, skin in ipairs(weaponSkins[currentWeaponName]) do table.insert(skinList, skin) end
+				end
+				table.sort(skinList)
+				Options.skinSkin:SetValues(skinList)
+				Options.skinSkin:SetValue("none")
+				currentSkinName = "none"
+			end })
 
-				local frame = create("Frame", body, {
-					Size = UDim2.new(1, 0, 0, 32),
-					BackgroundTransparency = 1,
-					LayoutOrder = nextOrder(),
-				})
+		SkinGroup:AddDropdown('skinSkin', { Text = 'Skin', Default = "none", Values = {"none"}, AllowNull = true,
+			Callback = function(v)
+				currentSkinName = v or "none"
+				if currentWeaponName ~= "none" and currentSkinName ~= "none" then
+					weaponSkinConfig[currentWeaponName] = { skin = currentSkinName, condition = currentCondition }
+					task.wait(0.1); forceReequipWeapon()
+				end
+			end })
 
-				local lbl = create("TextLabel", frame, {
-					Size = UDim2.new(0.7, 0, 0, 16),
-					BackgroundTransparency = 1,
-					Text = cfg.Label or "",
-					TextColor3 = Theme.TextMid,
-					TextSize = 12,
-					Font = Enum.Font.Gotham,
-					TextXAlignment = Enum.TextXAlignment.Left,
-				})
+		SkinGroup:AddDropdown('skinCondition', { Text = 'Condition', Default = "factory new", Values = conditions,
+			Callback = function(v)
+				currentCondition = v
+				if currentWeaponName ~= "none" and currentSkinName ~= "none" then
+					weaponSkinConfig[currentWeaponName] = { skin = currentSkinName, condition = currentCondition }
+					task.wait(0.1); forceReequipWeapon()
+				end
+			end })
 
-				local valLabel = create("TextLabel", frame, {
-					Size = UDim2.new(0.3, 0, 0, 16),
-					Position = UDim2.new(0.7, 0, 0, 0),
-					BackgroundTransparency = 1,
-					Text = tostring(value),
-					TextColor3 = Theme.Accent,
-					TextSize = 12,
-					Font = Enum.Font.GothamMedium,
-					TextXAlignment = Enum.TextXAlignment.Right,
-				})
+		-- Knife Section
+		local KnifeGroup = Tabs['Skin Changer']:AddRightGroupbox('Knife')
+		local currentKnifeName, currentKnifeSkin, currentKnifeCondition = "none", "none", "factory new"
+		
+		local knifeList = {"none"}
+		for weaponName in pairs(weaponSkins) do
+			local isKnife = false
+			for _, knifeName in ipairs(KnifeList) do
+				if weaponName == knifeName then isKnife = true; break end
+			end
+			if isKnife then table.insert(knifeList, weaponName) end
+		end
+		table.sort(knifeList)
 
-				local track = create("TextButton", frame, {
-					Size = UDim2.new(1, 0, 0, 6),
-					Position = UDim2.new(0, 0, 0, 20),
-					BackgroundColor3 = Theme.BgInput,
-					BorderSizePixel = 0,
-					Text = "",
-					AutoButtonColor = false,
-				})
-				create("UICorner", track, { CornerRadius = UDim.new(1, 0) })
+		KnifeGroup:AddDropdown('knifeModel', { Text = 'Knife', Default = "none", Values = knifeList,
+			Callback = function(v)
+				currentKnifeName = v
+				local skinList = {"none"}
+				if currentKnifeName ~= "none" and weaponSkins[currentKnifeName] then
+					for _, skin in ipairs(weaponSkins[currentKnifeName]) do table.insert(skinList, skin) end
+				end
+				table.sort(skinList)
+				Options.knifeSkin:SetValues(skinList)
+				Options.knifeSkin:SetValue("none")
+				currentKnifeSkin = "none"
+			end })
 
-				local ratio = math.clamp((value - min) / math.max(max - min, 1), 0, 1)
-				local fill = create("Frame", track, {
-					Size = UDim2.new(ratio, 0, 1, 0),
-					BackgroundColor3 = Theme.Accent,
-					BorderSizePixel = 0,
-				})
-				create("UICorner", fill, { CornerRadius = UDim.new(1, 0) })
+		KnifeGroup:AddDropdown('knifeSkin', { Text = 'Skin', Default = "none", Values = {"none"}, AllowNull = true,
+			Callback = function(v)
+				currentKnifeSkin = v or "none"
+				if currentKnifeName ~= "none" and currentKnifeSkin ~= "none" then
+					weaponSkinConfig[currentKnifeName] = { skin = currentKnifeSkin, condition = currentKnifeCondition }
+					knifeGloveMapping.knife = currentKnifeName
+					task.wait(0.1); forceReequipWeapon()
+				end
+			end })
 
-				local thumb = create("Frame", track, {
-					Size = UDim2.fromOffset(10, 10),
-					Position = UDim2.new(ratio, 0, 0.5, 0),
-					AnchorPoint = Vector2.new(0.5, 0.5),
-					BackgroundColor3 = Theme.Text,
-					BorderSizePixel = 0,
-					ZIndex = 2,
-				})
-				create("UICorner", thumb, { CornerRadius = UDim.new(1, 0) })
+		KnifeGroup:AddDropdown('knifeCondition', { Text = 'Condition', Default = "factory new", Values = conditions,
+			Callback = function(v)
+				currentKnifeCondition = v
+				if currentKnifeName ~= "none" and currentKnifeSkin ~= "none" then
+					weaponSkinConfig[currentKnifeName] = { skin = currentKnifeSkin, condition = currentKnifeCondition }
+					task.wait(0.1); forceReequipWeapon()
+				end
+			end })
 
-				local function updateFromInput(input)
-					local absX = track.AbsolutePosition.X
-					local absW = track.AbsoluteSize.X
-					local r = math.clamp((input.Position.X - absX) / absW, 0, 1)
-					local newVal = math.floor(min + r * (max - min) + 0.5)
-					if newVal ~= value then
-						value = newVal
-						el.Value = value
-						valLabel.Text = tostring(value)
-						fill.Size = UDim2.new(r, 0, 1, 0)
-						thumb.Position = UDim2.new(r, 0, 0.5, 0)
-						if cb then cb(el, value) end
+		-- Glove Section
+		local GloveGroup = Tabs['Skin Changer']:AddRightGroupbox('Gloves')
+		local currentGloveName, currentGloveSkin, currentGloveCondition = "none", "none", "factory new"
+		
+		local gloveList = {"none"}
+		for weaponName in pairs(weaponSkins) do
+			if weaponName:find("Glove") then table.insert(gloveList, weaponName) end
+		end
+		table.sort(gloveList)
+
+		GloveGroup:AddDropdown('gloveModel', { Text = 'Glove', Default = "none", Values = gloveList,
+			Callback = function(v)
+				currentGloveName = v
+				local skinList = {"none"}
+				if currentGloveName ~= "none" and weaponSkins[currentGloveName] then
+					for _, skin in ipairs(weaponSkins[currentGloveName]) do table.insert(skinList, skin) end
+				end
+				table.sort(skinList)
+				Options.gloveSkin:SetValues(skinList)
+				Options.gloveSkin:SetValue("none")
+				currentGloveSkin = "none"
+			end })
+
+		GloveGroup:AddDropdown('gloveSkin', { Text = 'Skin', Default = "none", Values = {"none"}, AllowNull = true,
+			Callback = function(v)
+				currentGloveSkin = v or "none"
+				if currentGloveName ~= "none" and currentGloveSkin ~= "none" then
+					weaponSkinConfig[currentGloveName] = { skin = currentGloveSkin, condition = currentGloveCondition }
+					knifeGloveMapping.glove = currentGloveName
+					task.wait(0.1); forceReequipWeapon()
+				end
+			end })
+
+		GloveGroup:AddDropdown('gloveCondition', { Text = 'Condition', Default = "factory new", Values = conditions,
+			Callback = function(v)
+				currentGloveCondition = v
+				if currentGloveName ~= "none" and currentGloveSkin ~= "none" then
+					weaponSkinConfig[currentGloveName] = { skin = currentGloveSkin, condition = currentGloveCondition }
+					task.wait(0.1); forceReequipWeapon()
+				end
+			end })
+
+		-- Skin Viewer (ViewportFrame)
+		local ViewerGroup = Tabs['Skin Changer']:AddLeftGroupbox('Skin Viewer')
+		ViewerGroup:AddLabel('Select a knife to preview:')
+		ViewerGroup:AddButton({
+			Text = 'Preview Knife',
+			Func = function()
+				task.spawn(function()
+					local kName = currentKnifeName ~= "none" and currentKnifeName or currentWeaponName
+					local sName = currentKnifeName ~= "none" and currentKnifeSkin or currentSkinName
+					if kName == "none" or sName == "none" then
+						Library:Notify("Select a weapon and skin first!", 3)
+						return
 					end
-				end
-
-				track.InputBegan:Connect(function(input)
-					if input.UserInputType == Enum.UserInputType.MouseButton1 then
-						activeSlider = updateFromInput
-						updateFromInput(input)
+					-- Try to use GetCameraModel to get the skin model
+					if not skinsLibrary or not originalGetCameraModel then
+						Library:Notify("Skin system not initialized", 3)
+						return
 					end
-				end)
-
-				function el:SetValue(v)
-					value = math.clamp(v, min, max)
-					el.Value = value
-					local r = (value - min) / math.max(max - min, 1)
-					valLabel.Text = tostring(value)
-					fill.Size = UDim2.new(r, 0, 1, 0)
-					thumb.Position = UDim2.new(r, 0, 0.5, 0)
-				end
-
-				return el
-			end
-
-			-- ════════════════════════
-			-- COMBO
-			-- ════════════════════════
-			function Section:Combo(cfg)
-				local selected = cfg.Selected or cfg.Value or ""
-				local items = cfg.Items or cfg.Options or {}
-				local cb = cfg.Callback
-				local internal = { items = items }
-
-				local frame = create("Frame", body, {
-					Size = UDim2.new(1, 0, 0, 22),
-					BackgroundTransparency = 1,
-					LayoutOrder = nextOrder(),
-				})
-
-				create("TextLabel", frame, {
-					Size = UDim2.new(0.5, 0, 1, 0),
-					BackgroundTransparency = 1,
-					Text = cfg.Label or "",
-					TextColor3 = Theme.TextMid,
-					TextSize = 12,
-					Font = Enum.Font.Gotham,
-					TextXAlignment = Enum.TextXAlignment.Left,
-				})
-
-				local btnFrame = create("Frame", frame, {
-					Size = UDim2.new(0.5, 0, 1, 0),
-					Position = UDim2.new(0.5, 0, 0, 0),
-					BackgroundColor3 = Theme.BgInput,
-					BorderSizePixel = 0,
-				})
-				create("UICorner", btnFrame, { CornerRadius = UDim.new(0, 3) })
-				create("UIStroke", btnFrame, { Color = Theme.Border, Thickness = 1, Transparency = 0.7 })
-
-				local selBtn = create("TextButton", btnFrame, {
-					Size = UDim2.new(1, -12, 1, 0),
-					Position = UDim2.new(0, 6, 0, 0),
-					BackgroundTransparency = 1,
-					Text = selected .. "  \xE2\x96\xBC",
-					TextColor3 = Theme.TextMid,
-					TextSize = 11,
-					Font = Enum.Font.Gotham,
-					AutoButtonColor = false,
-					TextXAlignment = Enum.TextXAlignment.Left,
-					TextTruncate = Enum.TextTruncate.AtEnd,
-				})
-
-				local function openDropdown()
-					closeDropdown()
-
-					local absPos = btnFrame.AbsolutePosition
-					local absSize = btnFrame.AbsoluteSize
-					local maxH = math.min(#internal.items * 22 + 4, 180)
-
-					local dd = create("Frame", dropdownOverlay, {
-						Size = UDim2.fromOffset(absSize.X, maxH),
-						Position = UDim2.fromOffset(absPos.X, absPos.Y + absSize.Y + 2),
-						BackgroundColor3 = Theme.BgChild,
-						BorderSizePixel = 0,
-						ZIndex = 101,
-					})
-					create("UICorner", dd, { CornerRadius = UDim.new(0, 4) })
-					create("UIStroke", dd, { Color = Theme.Border, Thickness = 1, Transparency = 0.5 })
-
-					local scroll = create("ScrollingFrame", dd, {
-						Size = UDim2.new(1, -4, 1, -4),
-						Position = UDim2.fromOffset(2, 2),
-						BackgroundTransparency = 1,
-						ScrollBarThickness = 2,
-						ScrollBarImageColor3 = Theme.Accent,
-						BorderSizePixel = 0,
-						CanvasSize = UDim2.fromOffset(0, #internal.items * 22),
-						ZIndex = 102,
-					})
-					create("UIListLayout", scroll, {
-						SortOrder = Enum.SortOrder.LayoutOrder,
-					})
-
-					for idx, item in ipairs(internal.items) do
-						local isActive = (item == selected)
-						local opt = create("TextButton", scroll, {
-							Size = UDim2.new(1, 0, 0, 22),
-							BackgroundColor3 = Theme.Accent,
-							BackgroundTransparency = isActive and 0.7 or 1,
-							Text = "",
-							AutoButtonColor = false,
-							LayoutOrder = idx,
-							ZIndex = 103,
-						})
-
-						local optLabel = create("TextLabel", opt, {
-							Size = UDim2.new(1, -16, 1, 0),
-							Position = UDim2.new(0, 8, 0, 0),
-							BackgroundTransparency = 1,
-							Text = item,
-							TextColor3 = isActive and Theme.Text or Theme.TextMid,
-							TextSize = 11,
-							Font = Enum.Font.Gotham,
-							TextXAlignment = Enum.TextXAlignment.Left,
-							ZIndex = 103,
-						})
-
-						opt.MouseEnter:Connect(function()
-							if item ~= selected then
-								tw(opt, { BackgroundTransparency = 0.85 }, 0.08)
-							end
-						end)
-						opt.MouseLeave:Connect(function()
-							if item ~= selected then
-								tw(opt, { BackgroundTransparency = 1 }, 0.08)
-							end
-						end)
-						opt.MouseButton1Click:Connect(function()
-							selected = item
-							rawset(el, "Value", selected)
-							selBtn.Text = selected .. "  \xE2\x96\xBC"
-							if cb then cb(el, selected) end
-							closeDropdown()
-						end)
+					local cond = currentKnifeName ~= "none" and currentKnifeCondition or currentCondition
+					local float = getFloatFromCondition(cond)
+					local ok, model = pcall(function()
+						return originalGetCameraModel(kName, sName, float)
+					end)
+					if not ok or not model then
+						Library:Notify("Failed to load skin model", 3)
+						return
 					end
-
-					activeDropdown = dd
-					dropdownOverlay.Visible = true
-				end
-
-				selBtn.MouseButton1Click:Connect(openDropdown)
-
-				-- use proxy for settable Items property
-				local el = setmetatable({}, {
-					__newindex = function(t, k, v)
-						if k == "Items" then
-							internal.items = v
-							local found = false
-							for _, item in ipairs(v) do
-								if item == selected then found = true; break end
-							end
-							if not found and #v > 0 then
-								selected = v[1]
-								rawset(t, "Value", selected)
-								selBtn.Text = selected .. "  \xE2\x96\xBC"
-							end
-						else
-							rawset(t, k, v)
-						end
-					end,
-					__index = function(t, k)
-						if k == "Items" then return internal.items end
-						return rawget(t, k)
-					end,
-				})
-
-				el.Value = selected
-
-				function el:SetItems(newItems)
-					internal.items = newItems
-				end
-
-				return el
-			end
-
-			-- ════════════════════════
-			-- INPUT TEXT
-			-- ════════════════════════
-			function Section:InputText(cfg)
-				local value = cfg.Value or ""
-				local cb = cfg.Callback
-				local el = {}
-
-				local frame = create("Frame", body, {
-					Size = UDim2.new(1, 0, 0, 22),
-					BackgroundTransparency = 1,
-					LayoutOrder = nextOrder(),
-				})
-
-				create("TextLabel", frame, {
-					Size = UDim2.new(0.4, 0, 1, 0),
-					BackgroundTransparency = 1,
-					Text = cfg.Label or "",
-					TextColor3 = Theme.TextMid,
-					TextSize = 12,
-					Font = Enum.Font.Gotham,
-					TextXAlignment = Enum.TextXAlignment.Left,
-				})
-
-				local inputBox = create("TextBox", frame, {
-					Size = UDim2.new(0.6, 0, 1, 0),
-					Position = UDim2.new(0.4, 0, 0, 0),
-					BackgroundColor3 = Theme.BgInput,
-					BorderSizePixel = 0,
-					Text = value,
-					PlaceholderText = cfg.PlaceHolder or cfg.Placeholder or "",
-					PlaceholderColor3 = Color3.fromRGB(55, 55, 60),
-					TextColor3 = Theme.Text,
-					TextSize = 11,
-					Font = Enum.Font.Gotham,
-					ClearTextOnFocus = false,
-					TextTruncate = Enum.TextTruncate.AtEnd,
-				})
-				create("UICorner", inputBox, { CornerRadius = UDim.new(0, 3) })
-				create("UIPadding", inputBox, { PaddingLeft = UDim.new(0, 6), PaddingRight = UDim.new(0, 6) })
-				local iStroke = create("UIStroke", inputBox, { Color = Theme.Border, Thickness = 1, Transparency = 0.7 })
-
-				inputBox.Focused:Connect(function()
-					tw(iStroke, { Color = Theme.Accent, Transparency = 0.3 }, 0.15)
-				end)
-				inputBox.FocusLost:Connect(function()
-					value = inputBox.Text
-					tw(iStroke, { Color = Theme.Border, Transparency = 0.7 }, 0.15)
-					if cb then cb(el, value) end
-				end)
-
-				function el:GetValue()
-					return inputBox.Text
-				end
-				function el:SetValue(v)
-					inputBox.Text = v
-					value = v
-				end
-
-				return el
-			end
-
-			-- ════════════════════════
-			-- BUTTON
-			-- ════════════════════════
-			function Section:Button(cfg)
-				local cb = cfg.Callback
-				local el = {}
-
-				local btn = create("TextButton", body, {
-					Size = UDim2.new(1, 0, 0, 26),
-					BackgroundColor3 = Theme.BgInput,
-					BorderSizePixel = 0,
-					Text = cfg.Text or "button",
-					TextColor3 = Theme.TextMid,
-					TextSize = 12,
-					Font = Enum.Font.GothamMedium,
-					AutoButtonColor = false,
-					LayoutOrder = nextOrder(),
-				})
-				create("UICorner", btn, { CornerRadius = UDim.new(0, 4) })
-				create("UIStroke", btn, { Color = Theme.Border, Thickness = 1, Transparency = 0.7 })
-
-				btn.MouseEnter:Connect(function()
-					tw(btn, { BackgroundColor3 = Theme.Accent, BackgroundTransparency = 0.7, TextColor3 = Theme.Text }, 0.12)
-				end)
-				btn.MouseLeave:Connect(function()
-					tw(btn, { BackgroundColor3 = Theme.BgInput, BackgroundTransparency = 0, TextColor3 = Theme.TextMid }, 0.12)
-				end)
-				btn.MouseButton1Click:Connect(function()
-					if cb then cb() end
-				end)
-
-				return el
-			end
-
-			-- ════════════════════════
-			-- KEYBIND
-			-- ════════════════════════
-			function Section:Keybind(cfg)
-				local value = cfg.Value or Enum.KeyCode.Unknown
-				local cb = cfg.Callback
-				local listening = false
-				local el = { Value = value }
-
-				local frame = create("Frame", body, {
-					Size = UDim2.new(1, 0, 0, 22),
-					BackgroundTransparency = 1,
-					LayoutOrder = nextOrder(),
-				})
-
-				create("TextLabel", frame, {
-					Size = UDim2.new(1, -65, 1, 0),
-					BackgroundTransparency = 1,
-					Text = cfg.Label or "",
-					TextColor3 = Theme.TextMid,
-					TextSize = 12,
-					Font = Enum.Font.Gotham,
-					TextXAlignment = Enum.TextXAlignment.Left,
-				})
-
-				local keyBtn = create("TextButton", frame, {
-					Size = UDim2.new(0, 58, 0, 18),
-					Position = UDim2.new(1, -58, 0.5, 0),
-					AnchorPoint = Vector2.new(0, 0.5),
-					BackgroundColor3 = Theme.BgInput,
-					BorderSizePixel = 0,
-					Text = value.Name or "None",
-					TextColor3 = Theme.TextMid,
-					TextSize = 10,
-					Font = Enum.Font.GothamMedium,
-					AutoButtonColor = false,
-				})
-				create("UICorner", keyBtn, { CornerRadius = UDim.new(0, 3) })
-				create("UIStroke", keyBtn, { Color = Theme.Border, Thickness = 1, Transparency = 0.7 })
-
-				local listenConn
-				keyBtn.MouseButton1Click:Connect(function()
-					if listening then return end
-					listening = true
-					keyBtn.Text = "..."
-					tw(keyBtn, { BackgroundColor3 = Theme.Accent }, 0.12)
-
-					listenConn = UserInputService.InputBegan:Connect(function(input)
-						if input.UserInputType == Enum.UserInputType.Keyboard then
-							if input.KeyCode == Enum.KeyCode.Escape then
-								keyBtn.Text = value.Name
-							else
-								value = input.KeyCode
-								el.Value = value
-								keyBtn.Text = value.Name
-								if cb then cb(el, value) end
-							end
-							tw(keyBtn, { BackgroundColor3 = Theme.BgInput }, 0.12)
-							listening = false
-							listenConn:Disconnect()
+					-- Create viewport window
+					local viewerGui = Instance.new("ScreenGui")
+					viewerGui.Name = "LemonSkinViewer"
+					viewerGui.DisplayOrder = 100000
+					viewerGui.ResetOnSpawn = false
+					local protectGui = protectgui or (syn and syn.protect_gui) or function() end
+					protectGui(viewerGui)
+					viewerGui.Parent = game:GetService("CoreGui")
+					
+					local frame = Instance.new("Frame")
+					frame.Size = UDim2.fromOffset(350, 300)
+					frame.Position = UDim2.new(0.5, -175, 0.5, -150)
+					frame.BackgroundColor3 = Color3.fromRGB(20, 20, 22)
+					frame.BorderSizePixel = 0
+					frame.Parent = viewerGui
+					Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 8)
+					local stroke = Instance.new("UIStroke", frame)
+					stroke.Color = Color3.fromRGB(112, 146, 190)
+					stroke.Thickness = 1
+					
+					local titleBar = Instance.new("TextLabel")
+					titleBar.Size = UDim2.new(1, 0, 0, 28)
+					titleBar.BackgroundColor3 = Color3.fromRGB(28, 28, 30)
+					titleBar.BorderSizePixel = 0
+					titleBar.Text = "  " .. kName .. " | " .. sName
+					titleBar.TextColor3 = Color3.fromRGB(255, 255, 255)
+					titleBar.TextSize = 13
+					titleBar.Font = Enum.Font.GothamSemibold
+					titleBar.TextXAlignment = Enum.TextXAlignment.Left
+					titleBar.Parent = frame
+					Instance.new("UICorner", titleBar).CornerRadius = UDim.new(0, 8)
+					Instance.new("Frame", titleBar).Size = UDim2.new(1, 0, 0, 8)
+					Instance.new("Frame", titleBar).Position = UDim2.new(0, 0, 1, -8)
+					for _, f in titleBar:GetChildren() do
+						if f:IsA("Frame") then f.BackgroundColor3 = Color3.fromRGB(28, 28, 30); f.BorderSizePixel = 0 end
+					end
+					
+					local closeBtn = Instance.new("TextButton")
+					closeBtn.Size = UDim2.fromOffset(24, 24)
+					closeBtn.Position = UDim2.new(1, -26, 0, 2)
+					closeBtn.BackgroundTransparency = 1
+					closeBtn.Text = "×"
+					closeBtn.TextColor3 = Color3.fromRGB(180, 180, 180)
+					closeBtn.TextSize = 18
+					closeBtn.Font = Enum.Font.GothamBold
+					closeBtn.Parent = frame
+					closeBtn.MouseButton1Click:Connect(function() viewerGui:Destroy() end)
+					
+					local viewport = Instance.new("ViewportFrame")
+					viewport.Size = UDim2.new(1, -8, 1, -36)
+					viewport.Position = UDim2.new(0, 4, 0, 32)
+					viewport.BackgroundColor3 = Color3.fromRGB(13, 13, 15)
+					viewport.BorderSizePixel = 0
+					viewport.Parent = frame
+					Instance.new("UICorner", viewport).CornerRadius = UDim.new(0, 6)
+					
+					-- Clone model into viewport
+					local clonedModel = model:Clone()
+					clonedModel.Parent = viewport
+					
+					-- Setup camera
+					local vpCam = Instance.new("Camera")
+					vpCam.FieldOfView = 50
+					viewport.CurrentCamera = vpCam
+					vpCam.Parent = viewport
+					
+					-- Frame the model
+					local cf, size = clonedModel:GetBoundingBox()
+					local maxDim = math.max(size.X, size.Y, size.Z)
+					vpCam.CFrame = cf * CFrame.new(0, 0, maxDim * 1.5)
+					
+					-- Add lighting
+					local light = Instance.new("PointLight")
+					light.Brightness = 2
+					light.Range = 30
+					local lightPart = Instance.new("Part")
+					lightPart.Transparency = 1
+					lightPart.Size = Vector3.new(0.1, 0.1, 0.1)
+					lightPart.Anchored = true
+					lightPart.CanCollide = false
+					lightPart.CFrame = cf * CFrame.new(3, 3, 3)
+					light.Parent = lightPart
+					lightPart.Parent = viewport
+					
+					-- Spin animation
+					local angle = 0
+					local spinConn
+					spinConn = RunService.RenderStepped:Connect(function(dt)
+						if not viewport or not viewport.Parent then spinConn:Disconnect(); return end
+						angle = angle + dt * 0.5
+						vpCam.CFrame = cf * CFrame.Angles(0, angle, 0) * CFrame.new(0, 0, maxDim * 1.5)
+					end)
+					
+					-- Dragging for the viewer window
+					local dragging, dragStart, startPos
+					titleBar.InputBegan:Connect(function(input)
+						if input.UserInputType == Enum.UserInputType.MouseButton1 then
+							dragging = true; dragStart = input.Position; startPos = frame.Position
 						end
 					end)
+					UserInputService.InputChanged:Connect(function(input)
+						if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+							local d = input.Position - dragStart
+							frame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + d.X, startPos.Y.Scale, startPos.Y.Offset + d.Y)
+						end
+					end)
+					UserInputService.InputEnded:Connect(function(input)
+						if input.UserInputType == Enum.UserInputType.MouseButton1 then dragging = false end
+					end)
+					
+					Library:Notify("Skin viewer opened!", 2)
 				end)
-
-				function el:SetValue(v)
-					value = v
-					el.Value = v
-					keyBtn.Text = v.Name
-				end
-
-				return el
 			end
-
-			return Section
-		end
-
-		return Tab
+		})
 	end
 
-	-- ════════════════════════════════════════════════
-	-- WINDOW METHODS
-	-- ════════════════════════════════════════════════
-	function Window:SetVisible(v)
-		visible = v
-		windowFrame.Visible = v
-	end
-
-	function Window:Close()
-		windowFrame.Visible = false
-		visible = false
-	end
-
-	function Window:Destroy()
-		for _, conn in ipairs(connections) do
-			if conn and conn.Connected then
-				conn:Disconnect()
+	-- ═══════════════════════════════════════════════════
+	-- SETTINGS TAB
+	-- ═══════════════════════════════════════════════════
+	do
+		-- Config Section
+		local ConfigGroup = Tabs.Settings:AddLeftGroupbox('Configuration')
+		ConfigGroup:AddInput('configName', { Text = 'Config Name', Default = '', Placeholder = 'my config' })
+		ConfigGroup:AddDropdown('autoLoadConfig', { Text = 'Config', Default = cfg.autoLoadConfig, Values = getConfigList(), AllowNull = true,
+			Callback = function(v) cfg.autoLoadConfig = v or "none" end })
+		ConfigGroup:AddButton({ Text = 'Save Config', Func = function()
+			local name = Options.configName.Value
+			if name and name ~= "" then
+				saveCurrentConfig(name)
+				Options.autoLoadConfig:SetValues(getConfigList())
+				Library:Notify("Config '" .. name .. "' saved!", 2)
+			else
+				Library:Notify("Enter a config name first!", 2)
 			end
-		end
-		screenGui:Destroy()
+		end })
+		ConfigGroup:AddButton({ Text = 'Load Config', Func = function()
+			local name = cfg.autoLoadConfig
+			if name and name ~= "none" then
+				loadConfig(name)
+				Library:Notify("Config '" .. name .. "' loaded!", 2)
+			else
+				Library:Notify("Select a config to load!", 2)
+			end
+		end })
+		ConfigGroup:AddButton({ Text = 'Delete Config', Func = function()
+			local name = cfg.autoLoadConfig
+			if name and name ~= "none" then
+				deleteConfig(name)
+				Options.autoLoadConfig:SetValues(getConfigList())
+				Library:Notify("Config '" .. name .. "' deleted!", 2)
+			end
+		end })
+		ConfigGroup:AddDivider()
+		ConfigGroup:AddButton({
+			Text = 'Unload Script',
+			DoubleClick = true,
+			Func = function()
+				for _, esp in pairs(espObjects) do esp:destroy() end
+				for _, esp in pairs(droppedWeaponESPObjects) do esp:destroy() end
+				for _, t in pairs(bulletTracers) do if t.beam then t.beam:Destroy() end; if t.part0 then t.part0:Destroy() end; if t.part1 then t.part1:Destroy() end end
+				for _, c in pairs(conns) do if typeof(c) == "function" then pcall(c) elseif c and c.Disconnect then c:Disconnect() end end
+				for _, lines in pairs(skeletonLines) do for _, l in lines do l:Remove() end end
+				for _, glow in pairs(glowCache) do if glow then glow:Destroy() end end
+				for player in pairs(hitboxCache) do local char = player.Character; if char then local head = char:FindFirstChild("Head"); if head then head.Size = hitboxCache[player] end end end
+				fovCircle:Remove(); watermarkText:Remove(); spreadCircle:Remove(); bombTimerText:Remove()
+				resetViewmodelXray(); resetGunChams()
+				cfg.nightModeEnabled = false; setupNightMode()
+				cfg.antiAimEnabled = false; setupAntiAim()
+				if riskyBhopVelocity then riskyBhopVelocity:Destroy() end
+				if flashModule and originalFlash then local module = require(flashModule); module.Flash = originalFlash end
+				if skinsLibrary and originalGetCameraModel then skinsLibrary.GetCameraModel = originalGetCameraModel end
+				if customCharacterRig then for _, p in pairs(customCharacterRig) do if p then p:Destroy() end end end
+				Library:Unload()
+			end
+		})
+
+		-- Menu Settings
+		local MenuGroup = Tabs.Settings:AddRightGroupbox('Menu')
+		MenuGroup:AddLabel('Menu Toggle'):AddKeyPicker('menuToggleKey', {
+			Default = Enum.KeyCode.Insert,
+			Text = 'Menu Toggle',
+			Mode = 'Toggle',
+			Callback = function() end,
+		})
+		Library.ToggleKeybind = Options.menuToggleKey
+
+		-- Theme Section
+		local ThemeGroup = Tabs.Settings:AddRightGroupbox('Theme')
+		ThemeGroup:AddLabel('Accent Color'):AddColorPicker('accentColor', {
+			Default = Library.AccentColor,
+			Title = 'Accent Color',
+			Callback = function(c)
+				Library.AccentColor = c
+				Library.AccentColorDark = Library:GetDarkerColor(c)
+				Library:UpdateColorsUsingRegistry()
+			end
+		})
 	end
 
-	function Window:IsVisible()
-		return visible
-	end
-
-	-- expose for external use
-	Window.Window = windowFrame
-	Window.ScreenGui = screenGui
-
-	return Window
+	if cfg.autoLoadConfig and cfg.autoLoadConfig ~= "none" then loadConfig(cfg.autoLoadConfig) end
+	menuVisible = true
 end
 
-return Library
+initializeScript()
