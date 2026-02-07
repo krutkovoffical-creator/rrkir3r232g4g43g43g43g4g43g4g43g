@@ -735,6 +735,8 @@ function Library:CreateWindow(config)
 					TextTruncate = Enum.TextTruncate.AtEnd,
 				})
 
+				local el -- forward declare for closures
+
 				local function openDropdown()
 					closeDropdown()
 
@@ -821,7 +823,7 @@ function Library:CreateWindow(config)
 				selBtn.MouseButton1Click:Connect(openDropdown)
 
 				-- use proxy for settable Items property
-				local el = setmetatable({}, {
+				el = setmetatable({}, {
 					__newindex = function(t, k, v)
 						if k == "Items" then
 							internal.items = v
